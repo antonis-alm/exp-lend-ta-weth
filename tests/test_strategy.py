@@ -149,6 +149,31 @@ def test_sell_on_neutral_to_high_cross() -> None:
     assert strategy.trade_state == TradeState.SOLD_FOR_USDC
 
 
+def test_sell_on_low_to_high_cross() -> None:
+    strategy = _strategy()
+    strategy.base_inventory_weth = Decimal("1")
+    strategy.prev_zone = RSIZone.LOW
+    market = _market(
+        timestamp=datetime(2026, 1, 1, 12, 10, tzinfo=UTC),
+        usdc=Decimal("0"),
+        weth=Decimal("1"),
+        weth_price=Decimal("2500"),
+        rsi=Decimal("60"),
+        hf=Decimal("1.4"),
+        collateral_usd=Decimal("1500"),
+        debt_usd=Decimal("500"),
+        max_borrow_usd=Decimal("800"),
+    )
+
+    intent = strategy.decide(market)
+    assert intent is not None
+    assert intent.intent_type.value == "SWAP"
+    assert intent.from_token == "WETH"
+    assert intent.to_token == "USDC"
+    assert Decimal(str(intent.amount)) == Decimal("1")
+    assert strategy.trade_state == TradeState.SOLD_FOR_USDC
+
+
 def test_no_new_sell_when_hf_below_floor() -> None:
     strategy = _strategy()
     strategy.base_inventory_weth = Decimal("1")

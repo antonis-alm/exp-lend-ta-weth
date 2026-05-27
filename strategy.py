@@ -143,7 +143,7 @@ class TALendingSwapWETHStrategy(IntentStrategy):
 
         current_zone = self._rsi_zone(current_rsi)
 
-        if self.trade_state == TradeState.AVAILABLE_WETH and self.prev_zone == RSIZone.NEUTRAL and current_zone == RSIZone.HIGH:
+        if self.trade_state == TradeState.AVAILABLE_WETH and self.prev_zone != RSIZone.HIGH and current_zone == RSIZone.HIGH:
             if market_data["health_factor"] < self.sell_hf_floor:
                 self.last_processed_candle_key = candle_key
                 self.prev_zone = current_zone
