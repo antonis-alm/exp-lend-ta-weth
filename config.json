@@ -1,0 +1,37 @@
+{
+  "chain": "base",
+  "collateral_token": "USDC",
+  "borrow_token": "WETH",
+  "swap_protocol": "uniswap_v3",
+  "rsi_period": 9,
+  "rsi_timeframe": "5m",
+  "rsi_high": "55",
+  "rsi_low": "45",
+  "target_health_factor": "1.5",
+  "sell_hf_floor": "1.3",
+  "emergency_hf": "1.2",
+  "min_extra_usd_buyback": "0.02",
+  "repay_bucket_min_usd": "0.06",
+  "min_supply_usdc": "1",
+  "min_trade_weth": "0.00001",
+  "min_borrow_weth": "0.00001",
+  "initial_ltv_fallback": "0.6",
+  "max_slippage": "0.003",
+  "max_price_impact": "0.10",
+  "swap_fee_tier_bps": 500,
+  "swap_pool_selection_mode": "fixed",
+  "force_action": "",
+  "token_funding": [
+    {
+      "symbol": "USDC",
+      "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "amount": "25",
+      "amount_type": "usd"
+    }
+  ],
+  "anvil_funding": {
+    "ETH": 10,
+    "USDC": 100000,
+    "WETH": 5
+  }
+}
