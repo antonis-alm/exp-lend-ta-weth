@@ -91,6 +91,7 @@ class TALendingSwapWETHStrategy(IntentStrategy):
         self.pending_action = ""
         self.has_collateral_position = False
         self.has_borrow_position = False
+        self.last_rsi_value: Decimal | None = None
 
     def decide(self, market: MarketSnapshot) -> Intent | None:
         if self.force_action:
@@ -100,6 +101,17 @@ class TALendingSwapWETHStrategy(IntentStrategy):
             market_data = self._read_market_data(market)
         except ValueError as exc:
             return Intent.hold(reason=str(exc))
+
+        current_rsi = Decimal(str(market_data["rsi_value"]))
+        previous_rsi = self.last_rsi_value
+        self.last_rsi_value = current_rsi
+        rsi_trace = self._format_rsi_trace(current_rsi=current_rsi, previous_rsi=previous_rsi)
+        logger.info(
+            "RSI snapshot: %s | prev_zone=%s | trade_state=%s",
+            rsi_trace,
+            self.prev_zone.value,
+            self.trade_state.value,
+        )
 
         if market_data["health_factor"] < self.emergency_hf:
             emergency_intent = self._emergency_intent(market_data)
@@ -127,15 +139,15 @@ class TALendingSwapWETHStrategy(IntentStrategy):
 
         candle_key = self._candle_key_5m(market_data["timestamp"])
         if candle_key == self.last_processed_candle_key:
-            return Intent.hold(reason="Waiting for next 5m candle close")
+            return Intent.hold(reason=f"Waiting for next 5m candle close ({rsi_trace})")
 
-        current_zone = self._rsi_zone(market_data["rsi_value"])
+        current_zone = self._rsi_zone(current_rsi)
 
         if self.trade_state == TradeState.AVAILABLE_WETH and self.prev_zone == RSIZone.NEUTRAL and current_zone == RSIZone.HIGH:
             if market_data["health_factor"] < self.sell_hf_floor:
                 self.last_processed_candle_key = candle_key
                 self.prev_zone = current_zone
-                return Intent.hold(reason="HF below sell floor")
+                return Intent.hold(reason=f"HF below sell floor ({rsi_trace})")
 
             if self.base_inventory_weth <= 0:
                 self.base_inventory_weth = market_data["weth_balance"]
@@ -179,7 +191,7 @@ class TALendingSwapWETHStrategy(IntentStrategy):
 
         self.last_processed_candle_key = candle_key
         self.prev_zone = current_zone
-        return Intent.hold(reason="No signal")
+        return Intent.hold(reason=f"No signal ({rsi_trace})")
 
     def on_intent_executed(self, intent: Any, success: bool, result: Any) -> None:
         if not success:
@@ -238,6 +250,7 @@ class TALendingSwapWETHStrategy(IntentStrategy):
             },
             "has_collateral_position": self.has_collateral_position,
             "has_borrow_position": self.has_borrow_position,
+            "last_rsi_value": str(self.last_rsi_value) if self.last_rsi_value is not None else None,
         }
 
     def load_persistent_state(self, state: dict[str, Any]) -> None:
@@ -260,6 +273,9 @@ class TALendingSwapWETHStrategy(IntentStrategy):
         self.has_collateral_position = bool(state.get("has_collateral_position", False))
         self.has_borrow_position = bool(state.get("has_borrow_position", False))
 
+        last_rsi_value = state.get("last_rsi_value")
+        self.last_rsi_value = Decimal(str(last_rsi_value)) if last_rsi_value is not None else None
+
     def get_status(self) -> dict[str, Any]:
         return {
             "strategy": "t_a_lending_swap_w_e_t_h",
@@ -269,6 +285,7 @@ class TALendingSwapWETHStrategy(IntentStrategy):
             "excess_weth_bucket": str(self.excess_weth_bucket),
             "cycle_sold_weth": str(self.cycle.sold_weth),
             "cycle_usdc_proceeds": str(self.cycle.usdc_proceeds),
+            "last_rsi_value": str(self.last_rsi_value) if self.last_rsi_value is not None else None,
         }
 
     def get_open_positions(self) -> TeardownPositionSummary:
@@ -582,6 +599,10 @@ class TALendingSwapWETHStrategy(IntentStrategy):
             if out_raw is not None:
                 return Decimal(str(out_raw))
         return Decimal("0")
+
+    def _format_rsi_trace(self, current_rsi: Decimal, previous_rsi: Decimal | None) -> str:
+        previous_text = "n/a" if previous_rsi is None else format(previous_rsi, "f")
+        return f"rsi_current={format(current_rsi, 'f')} rsi_previous={previous_text}"
 
     def _rsi_zone(self, value: Decimal) -> RSIZone:
         if value > self.rsi_high:
