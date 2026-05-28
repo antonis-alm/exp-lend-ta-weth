@@ -233,7 +233,7 @@ class TALendingSwapWETHStrategy(IntentStrategy):
             self.cycle = CycleRecord()
             self.pending_action = ""
 
-    def save_persistent_state(self) -> dict[str, Any]:
+    def get_persistent_state(self) -> dict[str, Any]:
         return {
             "trade_state": self.trade_state.value,
             "prev_zone": self.prev_zone.value,
