@@ -24,7 +24,6 @@ def _config() -> dict:
         "target_health_factor": "1.5",
         "sell_hf_floor": "1.3",
         "emergency_hf": "1.2",
-        "min_extra_usd_buyback": "0.02",
         "repay_bucket_min_usd": "0.06",
         "min_supply_usdc": "1",
         "min_trade_weth": "0.00001",
@@ -238,7 +237,7 @@ def test_buyback_rejected_when_not_profitable() -> None:
         debt_usd=Decimal("500"),
         max_borrow_usd=Decimal("800"),
     )
-    market.best_dex_price = lambda **_: SimpleNamespace(amount_out_decimal=Decimal("1.000001"))
+    market.best_dex_price = lambda **_: SimpleNamespace(amount_out_decimal=Decimal("1"))
 
     intent = strategy.decide(market)
     assert intent is not None

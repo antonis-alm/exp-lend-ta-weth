@@ -10,7 +10,6 @@
   "target_health_factor": "1.5",
   "sell_hf_floor": "1.3",
   "emergency_hf": "1.2",
-  "min_extra_usd_buyback": "0.02",
   "repay_bucket_min_usd": "0.06",
   "min_supply_usdc": "1",
   "min_trade_weth": "0.00001",

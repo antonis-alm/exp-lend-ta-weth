@@ -70,7 +70,6 @@ class TALendingSwapWETHStrategy(IntentStrategy):
         self.target_health_factor = Decimal(str(self.get_config("target_health_factor", "1.5")))
         self.sell_hf_floor = Decimal(str(self.get_config("sell_hf_floor", "1.3")))
         self.emergency_hf = Decimal(str(self.get_config("emergency_hf", "1.2")))
-        self.min_extra_usd_buyback = Decimal(str(self.get_config("min_extra_usd_buyback", "0.02")))
         self.repay_bucket_min_usd = Decimal(str(self.get_config("repay_bucket_min_usd", "0.06")))
         self.min_supply_usdc = Decimal(str(self.get_config("min_supply_usdc", "1")))
         self.min_trade_weth = Decimal(str(self.get_config("min_trade_weth", "0.00001")))
@@ -174,8 +173,7 @@ class TALendingSwapWETHStrategy(IntentStrategy):
 
         if self.trade_state == TradeState.SOLD_FOR_USDC and self.prev_zone == RSIZone.NEUTRAL and current_zone == RSIZone.LOW:
             estimated_weth = self._estimate_buyback_weth(self.cycle.usdc_proceeds, market_data["weth_price"], market)
-            extra_weth = estimated_weth - self.cycle.sold_weth
-            if estimated_weth > self.cycle.sold_weth and extra_weth * market_data["weth_price"] >= self.min_extra_usd_buyback:
+            if estimated_weth > self.cycle.sold_weth:
                 self.pending_action = "buyback"
                 self.last_processed_candle_key = candle_key
                 self.prev_zone = current_zone
