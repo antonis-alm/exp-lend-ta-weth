@@ -94,17 +94,23 @@ class TALendingSwapWETHStrategy(IntentStrategy):
 
     def decide(self, market: MarketSnapshot) -> Intent | None:
         if self.force_action:
-            return self._forced_intent(market)
+            intent = self._forced_intent(market)
+            self._log_decision_snapshot(reason="force_action", intent=intent)
+            return intent
 
         try:
             market_data = self._read_market_data(market)
         except ValueError as exc:
-            return Intent.hold(reason=str(exc))
+            intent = Intent.hold(reason=str(exc))
+            self._log_decision_snapshot(reason="market_data_unavailable", intent=intent)
+            return intent
 
         current_rsi = Decimal(str(market_data["rsi_value"]))
         previous_rsi = self.last_rsi_value
         self.last_rsi_value = current_rsi
         rsi_trace = self._format_rsi_trace(current_rsi=current_rsi, previous_rsi=previous_rsi)
+        current_zone = self._rsi_zone(current_rsi)
+
         logger.info(
             "RSI snapshot: %s | prev_zone=%s | trade_state=%s",
             rsi_trace,
@@ -115,39 +121,57 @@ class TALendingSwapWETHStrategy(IntentStrategy):
         if market_data["health_factor"] < self.emergency_hf:
             emergency_intent = self._emergency_intent(market_data)
             if emergency_intent is not None:
+                self.prev_zone = current_zone
+                self._log_decision_snapshot(
+                    reason="emergency_health_factor",
+                    intent=emergency_intent,
+                    market_data=market_data,
+                    current_zone=current_zone,
+                )
                 return emergency_intent
 
         if self._should_supply_all_usdc(market_data):
             self.has_collateral_position = True
-            return Intent.supply(
+            intent = Intent.supply(
                 protocol="aave_v3",
                 token=self.collateral_token,
                 amount="all",
                 use_as_collateral=True,
                 chain=self.chain,
             )
+            self.prev_zone = current_zone
+            self._log_decision_snapshot(
+                reason="supply_all_usdc",
+                intent=intent,
+                market_data=market_data,
+                current_zone=current_zone,
+            )
+            return intent
 
         borrow_intent = self._maybe_borrow_to_target_hf(market_data)
         if borrow_intent is not None:
             self.has_borrow_position = True
+            self.prev_zone = current_zone
+            self._log_decision_snapshot(
+                reason="borrow_to_target_hf",
+                intent=borrow_intent,
+                market_data=market_data,
+                current_zone=current_zone,
+            )
             return borrow_intent
 
         repay_intent = self._maybe_repay_from_bucket(market_data)
         if repay_intent is not None:
+            self.prev_zone = current_zone
+            self._log_decision_snapshot(
+                reason="repay_from_excess_bucket",
+                intent=repay_intent,
+                market_data=market_data,
+                current_zone=current_zone,
+            )
             return repay_intent
 
-        candle_key = self._candle_key_5m(market_data["timestamp"])
-        if candle_key == self.last_processed_candle_key:
-            return Intent.hold(reason=f"Waiting for next 5m candle close ({rsi_trace})")
-
-        current_zone = self._rsi_zone(current_rsi)
-
-        if self.trade_state == TradeState.AVAILABLE_WETH and self.prev_zone != RSIZone.HIGH and current_zone == RSIZone.HIGH:
-            if market_data["health_factor"] < self.sell_hf_floor:
-                self.last_processed_candle_key = candle_key
-                self.prev_zone = current_zone
-                return Intent.hold(reason=f"HF below sell floor ({rsi_trace})")
-
+        if self.trade_state == TradeState.AVAILABLE_WETH and current_zone == RSIZone.HIGH:
             if self.base_inventory_weth <= 0:
                 self.base_inventory_weth = market_data["weth_balance"]
 
@@ -159,9 +183,7 @@ class TALendingSwapWETHStrategy(IntentStrategy):
                 )
                 self.trade_state = TradeState.SOLD_FOR_USDC
                 self.pending_action = "sell"
-                self.last_processed_candle_key = candle_key
-                self.prev_zone = current_zone
-                return Intent.swap(
+                intent = Intent.swap(
                     from_token=self.borrow_token,
                     to_token=self.collateral_token,
                     amount=self.base_inventory_weth,
@@ -170,26 +192,65 @@ class TALendingSwapWETHStrategy(IntentStrategy):
                     protocol=self.swap_protocol,
                     chain=self.chain,
                 )
-
-        if self.trade_state == TradeState.SOLD_FOR_USDC and self.prev_zone == RSIZone.NEUTRAL and current_zone == RSIZone.LOW:
-            estimated_weth = self._estimate_buyback_weth(self.cycle.usdc_proceeds, market_data["weth_price"], market)
-            if estimated_weth > self.cycle.sold_weth:
-                self.pending_action = "buyback"
-                self.last_processed_candle_key = candle_key
                 self.prev_zone = current_zone
-                return Intent.swap(
-                    from_token=self.collateral_token,
-                    to_token=self.borrow_token,
-                    amount=self.cycle.usdc_proceeds,
-                    max_slippage=self.max_slippage,
-                    max_price_impact=self.max_price_impact,
-                    protocol=self.swap_protocol,
-                    chain=self.chain,
+                self._log_decision_snapshot(
+                    reason="swap_sell_on_high_rsi",
+                    intent=intent,
+                    market_data=market_data,
+                    current_zone=current_zone,
                 )
+                return intent
 
-        self.last_processed_candle_key = candle_key
+            intent = Intent.hold(reason=f"Insufficient WETH inventory for sell ({rsi_trace})")
+            self.prev_zone = current_zone
+            self._log_decision_snapshot(
+                reason="sell_blocked_insufficient_weth",
+                intent=intent,
+                market_data=market_data,
+                current_zone=current_zone,
+            )
+            return intent
+
+        if self.trade_state == TradeState.SOLD_FOR_USDC and current_zone == RSIZone.LOW:
+            if self.cycle.usdc_proceeds <= 0:
+                intent = Intent.hold(reason=f"No USDC proceeds available for buyback ({rsi_trace})")
+                self.prev_zone = current_zone
+                self._log_decision_snapshot(
+                    reason="buyback_blocked_no_usdc_proceeds",
+                    intent=intent,
+                    market_data=market_data,
+                    current_zone=current_zone,
+                )
+                return intent
+
+            self.pending_action = "buyback"
+            intent = Intent.swap(
+                from_token=self.collateral_token,
+                to_token=self.borrow_token,
+                amount=self.cycle.usdc_proceeds,
+                max_slippage=self.max_slippage,
+                max_price_impact=self.max_price_impact,
+                protocol=self.swap_protocol,
+                chain=self.chain,
+            )
+            self.prev_zone = current_zone
+            self._log_decision_snapshot(
+                reason="swap_buyback_on_low_rsi",
+                intent=intent,
+                market_data=market_data,
+                current_zone=current_zone,
+            )
+            return intent
+
+        intent = Intent.hold(reason=f"No signal ({rsi_trace})")
         self.prev_zone = current_zone
-        return Intent.hold(reason=f"No signal ({rsi_trace})")
+        self._log_decision_snapshot(
+            reason="no_signal",
+            intent=intent,
+            market_data=market_data,
+            current_zone=current_zone,
+        )
+        return intent
 
     def on_intent_executed(self, intent: Any, success: bool, result: Any) -> None:
         if not success:
@@ -597,6 +658,60 @@ class TALendingSwapWETHStrategy(IntentStrategy):
             if out_raw is not None:
                 return Decimal(str(out_raw))
         return Decimal("0")
+
+    def _log_decision_snapshot(
+        self,
+        *,
+        reason: str,
+        intent: Intent,
+        market_data: dict[str, Decimal | datetime] | None = None,
+        current_zone: RSIZone | None = None,
+    ) -> None:
+        intent_type = getattr(getattr(intent, "intent_type", None), "value", "UNKNOWN")
+        intent_reason = getattr(intent, "reason", "")
+        rsi_value = market_data["rsi_value"] if market_data else None
+        hf_value = market_data["health_factor"] if market_data else None
+        usdc_balance = market_data["usdc_balance"] if market_data else None
+        weth_balance = market_data["weth_balance"] if market_data else None
+        weth_price = market_data["weth_price"] if market_data else None
+
+        logger.info(
+            "Decision snapshot:\n"
+            "- reason=%s\n"
+            "- intent_type=%s\n"
+            "- intent_reason=%s\n"
+            "- trade_state=%s\n"
+            "- pending_action=%s\n"
+            "- prev_zone=%s\n"
+            "- current_zone=%s\n"
+            "- rsi_current=%s\n"
+            "- health_factor=%s\n"
+            "- usdc_balance=%s\n"
+            "- weth_balance=%s\n"
+            "- weth_price=%s\n"
+            "- base_inventory_weth=%s\n"
+            "- excess_weth_bucket=%s\n"
+            "- cycle_sold_weth=%s\n"
+            "- cycle_usdc_proceeds=%s\n"
+            "- cycle_sold_price=%s",
+            reason,
+            intent_type,
+            intent_reason,
+            self.trade_state.value,
+            self.pending_action,
+            self.prev_zone.value,
+            current_zone.value if current_zone else "n/a",
+            rsi_value,
+            hf_value,
+            usdc_balance,
+            weth_balance,
+            weth_price,
+            self.base_inventory_weth,
+            self.excess_weth_bucket,
+            self.cycle.sold_weth,
+            self.cycle.usdc_proceeds,
+            self.cycle.sold_price,
+        )
 
     def _format_rsi_trace(self, current_rsi: Decimal, previous_rsi: Decimal | None) -> str:
         previous_text = "n/a" if previous_rsi is None else format(previous_rsi, "f")

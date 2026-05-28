@@ -173,7 +173,7 @@ def test_sell_on_low_to_high_cross() -> None:
     assert strategy.trade_state == TradeState.SOLD_FOR_USDC
 
 
-def test_no_new_sell_when_hf_below_floor() -> None:
+def test_sell_allowed_even_when_hf_below_sell_floor() -> None:
     strategy = _strategy()
     strategy.base_inventory_weth = Decimal("1")
     strategy.prev_zone = RSIZone.NEUTRAL
@@ -191,7 +191,9 @@ def test_no_new_sell_when_hf_below_floor() -> None:
 
     intent = strategy.decide(market)
     assert intent is not None
-    assert intent.intent_type.value == "HOLD"
+    assert intent.intent_type.value == "SWAP"
+    assert intent.from_token == "WETH"
+    assert intent.to_token == "USDC"
 
 
 def test_buyback_only_when_profitable() -> None:
@@ -220,7 +222,7 @@ def test_buyback_only_when_profitable() -> None:
     assert intent.to_token == "WETH"
 
 
-def test_buyback_rejected_when_not_profitable() -> None:
+def test_buyback_executes_even_when_not_profitable_quote() -> None:
     strategy = _strategy()
     strategy.trade_state = TradeState.SOLD_FOR_USDC
     strategy.prev_zone = RSIZone.NEUTRAL
@@ -241,7 +243,9 @@ def test_buyback_rejected_when_not_profitable() -> None:
 
     intent = strategy.decide(market)
     assert intent is not None
-    assert intent.intent_type.value == "HOLD"
+    assert intent.intent_type.value == "SWAP"
+    assert intent.from_token == "USDC"
+    assert intent.to_token == "WETH"
 
 
 def test_repay_from_excess_bucket_threshold() -> None:
@@ -284,14 +288,17 @@ def test_emergency_hf_prioritizes_repay() -> None:
     assert intent.intent_type.value == "REPAY"
 
 
-def test_same_candle_processed_once() -> None:
+def test_buyback_does_not_wait_for_next_candle() -> None:
     strategy = _strategy()
+    strategy.trade_state = TradeState.SOLD_FOR_USDC
+    strategy.cycle = CycleRecord(sold_weth=Decimal("1"), usdc_proceeds=Decimal("2500"))
+
     market = _market(
         timestamp=datetime(2026, 1, 1, 12, 30, tzinfo=UTC),
-        usdc=Decimal("0"),
+        usdc=Decimal("2500"),
         weth=Decimal("0"),
         weth_price=Decimal("2500"),
-        rsi=Decimal("50"),
+        rsi=Decimal("40"),
         hf=Decimal("1.4"),
         collateral_usd=Decimal("1200"),
         debt_usd=Decimal("400"),
@@ -302,7 +309,8 @@ def test_same_candle_processed_once() -> None:
     second = strategy.decide(market)
     assert first is not None
     assert second is not None
-    assert second.intent_type.value == "HOLD"
+    assert first.intent_type.value == "SWAP"
+    assert second.intent_type.value == "SWAP"
 
 
 def test_buyback_execution_adds_only_extra_to_bucket() -> None:
