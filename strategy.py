@@ -175,9 +175,11 @@ class TALendingSwapWETHStrategy(IntentStrategy):
             if self.base_inventory_weth <= 0:
                 self.base_inventory_weth = market_data["weth_balance"]
 
-            if self.base_inventory_weth >= self.min_trade_weth:
+            sell_amount = min(self.base_inventory_weth, market_data["weth_balance"])
+
+            if sell_amount >= self.min_trade_weth:
                 self.cycle = CycleRecord(
-                    sold_weth=self.base_inventory_weth,
+                    sold_weth=sell_amount,
                     sold_price=market_data["weth_price"],
                     sold_at=market_data["timestamp"],
                 )
@@ -186,7 +188,7 @@ class TALendingSwapWETHStrategy(IntentStrategy):
                 intent = Intent.swap(
                     from_token=self.borrow_token,
                     to_token=self.collateral_token,
-                    amount=self.base_inventory_weth,
+                    amount=sell_amount,
                     max_slippage=self.max_slippage,
                     max_price_impact=self.max_price_impact,
                     protocol=self.swap_protocol,
@@ -286,10 +288,11 @@ class TALendingSwapWETHStrategy(IntentStrategy):
             return
 
         if intent_type == "SWAP" and self.pending_action == "buyback":
+            sold_weth = self.cycle.sold_weth
             bought_weth = self._extract_swap_out_amount(result)
-            extra_weth = max(Decimal("0"), bought_weth - self.cycle.sold_weth)
+            extra_weth = max(Decimal("0"), bought_weth - sold_weth)
             self.excess_weth_bucket += extra_weth
-            self.base_inventory_weth = self.cycle.sold_weth
+            self.base_inventory_weth = min(sold_weth, bought_weth) if bought_weth > 0 else sold_weth
             self.trade_state = TradeState.AVAILABLE_WETH
             self.cycle = CycleRecord()
             self.pending_action = ""
