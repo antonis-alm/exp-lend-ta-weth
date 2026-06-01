@@ -215,15 +215,23 @@ class TALendingSwapWETHStrategy(IntentStrategy):
 
         if self.trade_state == TradeState.SOLD_FOR_USDC and current_zone == RSIZone.LOW:
             if self.cycle.usdc_proceeds <= 0:
-                intent = Intent.hold(reason=f"No USDC proceeds available for buyback ({rsi_trace})")
-                self.prev_zone = current_zone
-                self._log_decision_snapshot(
-                    reason="buyback_blocked_no_usdc_proceeds",
-                    intent=intent,
-                    market_data=market_data,
-                    current_zone=current_zone,
-                )
-                return intent
+                recoverable_usdc = Decimal(str(market_data["usdc_balance"]))
+                if recoverable_usdc > 0:
+                    self.cycle.usdc_proceeds = recoverable_usdc
+                    logger.warning(
+                        "Recovered cycle.usdc_proceeds from live USDC balance while in sold_for_usdc state: %s",
+                        recoverable_usdc,
+                    )
+                else:
+                    intent = Intent.hold(reason=f"No USDC proceeds available for buyback ({rsi_trace})")
+                    self.prev_zone = current_zone
+                    self._log_decision_snapshot(
+                        reason="buyback_blocked_no_usdc_proceeds",
+                        intent=intent,
+                        market_data=market_data,
+                        current_zone=current_zone,
+                    )
+                    return intent
 
             self.pending_action = "buyback"
             intent = Intent.swap(
