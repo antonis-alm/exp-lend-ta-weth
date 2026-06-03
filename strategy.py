@@ -214,13 +214,13 @@ class TALendingSwapWETHStrategy(IntentStrategy):
             return intent
 
         if self.trade_state == TradeState.SOLD_FOR_USDC and current_zone == RSIZone.LOW:
+            available_usdc = Decimal(str(market_data["usdc_balance"]))
             if self.cycle.usdc_proceeds <= 0:
-                recoverable_usdc = Decimal(str(market_data["usdc_balance"]))
-                if recoverable_usdc > 0:
-                    self.cycle.usdc_proceeds = recoverable_usdc
+                if available_usdc > 0:
+                    self.cycle.usdc_proceeds = available_usdc
                     logger.warning(
                         "Recovered cycle.usdc_proceeds from live USDC balance while in sold_for_usdc state: %s",
-                        recoverable_usdc,
+                        available_usdc,
                     )
                 else:
                     intent = Intent.hold(reason=f"No USDC proceeds available for buyback ({rsi_trace})")
@@ -233,11 +233,31 @@ class TALendingSwapWETHStrategy(IntentStrategy):
                     )
                     return intent
 
+            buyback_amount = min(self.cycle.usdc_proceeds, available_usdc)
+            if buyback_amount <= 0:
+                intent = Intent.hold(reason=f"No live USDC balance available for buyback ({rsi_trace})")
+                self.prev_zone = current_zone
+                self._log_decision_snapshot(
+                    reason="buyback_blocked_no_live_usdc",
+                    intent=intent,
+                    market_data=market_data,
+                    current_zone=current_zone,
+                )
+                return intent
+
+            if buyback_amount != self.cycle.usdc_proceeds:
+                logger.warning(
+                    "Clamping buyback USDC amount to live balance: proceeds=%s available=%s",
+                    self.cycle.usdc_proceeds,
+                    available_usdc,
+                )
+                self.cycle.usdc_proceeds = buyback_amount
+
             self.pending_action = "buyback"
             intent = Intent.swap(
                 from_token=self.collateral_token,
                 to_token=self.borrow_token,
-                amount=self.cycle.usdc_proceeds,
+                amount=buyback_amount,
                 max_slippage=self.max_slippage,
                 max_price_impact=self.max_price_impact,
                 protocol=self.swap_protocol,

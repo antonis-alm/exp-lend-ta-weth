@@ -248,6 +248,32 @@ def test_buyback_executes_even_when_not_profitable_quote() -> None:
     assert intent.to_token == "WETH"
 
 
+def test_buyback_clamps_to_live_usdc_balance() -> None:
+    strategy = _strategy()
+    strategy.trade_state = TradeState.SOLD_FOR_USDC
+    strategy.prev_zone = RSIZone.NEUTRAL
+    strategy.cycle = CycleRecord(sold_weth=Decimal("1"), usdc_proceeds=Decimal("11.491067"))
+
+    market = _market(
+        timestamp=datetime(2026, 1, 1, 12, 21, tzinfo=UTC),
+        usdc=Decimal("11.490774"),
+        weth=Decimal("0"),
+        weth_price=Decimal("2500"),
+        rsi=Decimal("40"),
+        hf=Decimal("1.4"),
+        collateral_usd=Decimal("1500"),
+        debt_usd=Decimal("500"),
+        max_borrow_usd=Decimal("800"),
+    )
+
+    intent = strategy.decide(market)
+    assert intent is not None
+    assert intent.intent_type.value == "SWAP"
+    assert intent.from_token == "USDC"
+    assert Decimal(str(intent.amount)) == Decimal("11.490774")
+    assert strategy.cycle.usdc_proceeds == Decimal("11.490774")
+
+
 def test_repay_from_excess_bucket_threshold() -> None:
     strategy = _strategy()
     strategy.excess_weth_bucket = Decimal("0.00003")
