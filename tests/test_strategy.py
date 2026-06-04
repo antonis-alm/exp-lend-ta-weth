@@ -288,6 +288,33 @@ def test_sell_does_not_transition_when_balances_do_not_change() -> None:
     assert strategy.pending_action == "sell"
 
 
+def test_stale_sold_state_resets_when_weth_still_present() -> None:
+    strategy = _strategy()
+    strategy.trade_state = TradeState.SOLD_FOR_USDC
+    strategy.cycle = CycleRecord(sold_weth=Decimal("1"), usdc_proceeds=Decimal("0"))
+    strategy.base_inventory_weth = Decimal("0")
+
+    market = _market(
+        timestamp=datetime(2026, 1, 1, 12, 16, tzinfo=UTC),
+        usdc=Decimal("0"),
+        weth=Decimal("1"),
+        weth_price=Decimal("2500"),
+        rsi=Decimal("50"),
+        hf=Decimal("1.4"),
+        collateral_usd=Decimal("1500"),
+        debt_usd=Decimal("500"),
+        max_borrow_usd=Decimal("800"),
+    )
+
+    intent = strategy.decide(market)
+    assert intent is not None
+    assert intent.intent_type.value == "HOLD"
+    assert strategy.trade_state == TradeState.AVAILABLE_WETH
+    assert strategy.base_inventory_weth == Decimal("1")
+    assert strategy.cycle.sold_weth == Decimal("0")
+    assert strategy.cycle.usdc_proceeds == Decimal("0")
+
+
 def test_buyback_only_when_profitable() -> None:
     strategy = _strategy()
     strategy.trade_state = TradeState.SOLD_FOR_USDC

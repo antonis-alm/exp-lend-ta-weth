@@ -114,6 +114,7 @@ class TALendingSwapWETHStrategy(IntentStrategy):
         current_zone = self._rsi_zone(current_rsi)
 
         self._reconcile_pending_sell_state(market_data)
+        self._reconcile_stale_sold_state(market_data)
 
         logger.info(
             "RSI snapshot: %s | prev_zone=%s | trade_state=%s",
@@ -692,6 +693,31 @@ class TALendingSwapWETHStrategy(IntentStrategy):
             "Confirmed sell settlement from balance deltas: sold_weth=%s usdc_proceeds=%s",
             self.cycle.sold_weth,
             self.cycle.usdc_proceeds,
+        )
+
+    def _reconcile_stale_sold_state(self, data: dict[str, Decimal | datetime]) -> None:
+        if self.trade_state != TradeState.SOLD_FOR_USDC:
+            return
+        if self.pending_action == "sell":
+            return
+
+        current_weth = Decimal(str(data["weth_balance"]))
+        current_usdc = Decimal(str(data["usdc_balance"]))
+        sold_weth = self.cycle.sold_weth
+
+        has_no_sell_proceeds = self.cycle.usdc_proceeds <= 0 and current_usdc <= 0
+        still_holds_sold_inventory = sold_weth > 0 and current_weth >= sold_weth
+
+        if not (has_no_sell_proceeds and still_holds_sold_inventory):
+            return
+
+        self.trade_state = TradeState.AVAILABLE_WETH
+        self.base_inventory_weth = max(self.base_inventory_weth, current_weth)
+        self.cycle = CycleRecord()
+
+        logger.warning(
+            "Reset stale sold_for_usdc state: no USDC proceeds and WETH inventory unchanged (weth=%s)",
+            current_weth,
         )
 
     def _estimate_buyback_weth(self, usdc_amount: Decimal, weth_price: Decimal, market: MarketSnapshot) -> Decimal:
