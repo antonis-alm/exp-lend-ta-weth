@@ -88,6 +88,8 @@ class TALendingSwapWETHStrategy(IntentStrategy):
         self.excess_weth_bucket = Decimal("0")
         self.cycle = CycleRecord()
         self.pending_action = ""
+        self.pending_sell_weth_balance = Decimal("0")
+        self.pending_sell_usdc_balance = Decimal("0")
         self.has_collateral_position = False
         self.has_borrow_position = False
         self.last_rsi_value: Decimal | None = None
@@ -111,12 +113,25 @@ class TALendingSwapWETHStrategy(IntentStrategy):
         rsi_trace = self._format_rsi_trace(current_rsi=current_rsi, previous_rsi=previous_rsi)
         current_zone = self._rsi_zone(current_rsi)
 
+        self._reconcile_pending_sell_state(market_data)
+
         logger.info(
             "RSI snapshot: %s | prev_zone=%s | trade_state=%s",
             rsi_trace,
             self.prev_zone.value,
             self.trade_state.value,
         )
+
+        if self.pending_action == "sell":
+            intent = Intent.hold(reason="Waiting for sell settlement confirmation")
+            self.prev_zone = current_zone
+            self._log_decision_snapshot(
+                reason="sell_pending_settlement",
+                intent=intent,
+                market_data=market_data,
+                current_zone=current_zone,
+            )
+            return intent
 
         if market_data["health_factor"] < self.emergency_hf:
             emergency_intent = self._emergency_intent(market_data)
@@ -183,8 +198,9 @@ class TALendingSwapWETHStrategy(IntentStrategy):
                     sold_price=market_data["weth_price"],
                     sold_at=market_data["timestamp"],
                 )
-                self.trade_state = TradeState.SOLD_FOR_USDC
                 self.pending_action = "sell"
+                self.pending_sell_weth_balance = Decimal(str(market_data["weth_balance"]))
+                self.pending_sell_usdc_balance = Decimal(str(market_data["usdc_balance"]))
                 intent = Intent.swap(
                     from_token=self.borrow_token,
                     to_token=self.collateral_token,
@@ -284,6 +300,10 @@ class TALendingSwapWETHStrategy(IntentStrategy):
 
     def on_intent_executed(self, intent: Any, success: bool, result: Any) -> None:
         if not success:
+            if self.pending_action == "sell":
+                self.cycle = CycleRecord()
+                self.pending_sell_weth_balance = Decimal("0")
+                self.pending_sell_usdc_balance = Decimal("0")
             self.pending_action = ""
             return
 
@@ -310,9 +330,8 @@ class TALendingSwapWETHStrategy(IntentStrategy):
             proceeds = self._extract_swap_out_amount(result)
             if proceeds <= 0 and self.cycle.sold_price > 0:
                 proceeds = sold * self.cycle.sold_price
-            self.cycle.usdc_proceeds = proceeds
-            self.base_inventory_weth = sold
-            self.pending_action = ""
+            if proceeds > 0:
+                self.cycle.usdc_proceeds = proceeds
             return
 
         if intent_type == "SWAP" and self.pending_action == "buyback":
@@ -338,9 +357,12 @@ class TALendingSwapWETHStrategy(IntentStrategy):
                 "sold_price": str(self.cycle.sold_price),
                 "sold_at": self.cycle.sold_at.isoformat() if self.cycle.sold_at else None,
             },
+            "pending_action": self.pending_action,
             "has_collateral_position": self.has_collateral_position,
             "has_borrow_position": self.has_borrow_position,
             "last_rsi_value": str(self.last_rsi_value) if self.last_rsi_value is not None else None,
+            "pending_sell_weth_balance": str(self.pending_sell_weth_balance),
+            "pending_sell_usdc_balance": str(self.pending_sell_usdc_balance),
         }
 
     def load_persistent_state(self, state: dict[str, Any]) -> None:
@@ -360,11 +382,14 @@ class TALendingSwapWETHStrategy(IntentStrategy):
             sold_at=sold_at,
         )
 
+        self.pending_action = str(state.get("pending_action", ""))
         self.has_collateral_position = bool(state.get("has_collateral_position", False))
         self.has_borrow_position = bool(state.get("has_borrow_position", False))
 
         last_rsi_value = state.get("last_rsi_value")
         self.last_rsi_value = Decimal(str(last_rsi_value)) if last_rsi_value is not None else None
+        self.pending_sell_weth_balance = Decimal(str(state.get("pending_sell_weth_balance", "0")))
+        self.pending_sell_usdc_balance = Decimal(str(state.get("pending_sell_usdc_balance", "0")))
 
     def get_status(self) -> dict[str, Any]:
         return {
@@ -376,6 +401,7 @@ class TALendingSwapWETHStrategy(IntentStrategy):
             "cycle_sold_weth": str(self.cycle.sold_weth),
             "cycle_usdc_proceeds": str(self.cycle.usdc_proceeds),
             "last_rsi_value": str(self.last_rsi_value) if self.last_rsi_value is not None else None,
+            "pending_action": self.pending_action,
         }
 
     def get_open_positions(self) -> TeardownPositionSummary:
@@ -467,12 +493,14 @@ class TALendingSwapWETHStrategy(IntentStrategy):
                 raise ValueError("force_action=borrow requires positive borrow headroom")
             return borrow
         if self.force_action == "sell":
-            amount = self.base_inventory_weth if self.base_inventory_weth > 0 else self._read_market_data(market)["weth_balance"]
+            market_data = self._read_market_data(market)
+            amount = self.base_inventory_weth if self.base_inventory_weth > 0 else market_data["weth_balance"]
             if amount < self.min_trade_weth:
                 raise ValueError("force_action=sell requires WETH inventory")
             self.pending_action = "sell"
+            self.pending_sell_weth_balance = Decimal(str(market_data["weth_balance"]))
+            self.pending_sell_usdc_balance = Decimal(str(market_data["usdc_balance"]))
             self.cycle = CycleRecord(sold_weth=amount)
-            self.trade_state = TradeState.SOLD_FOR_USDC
             return Intent.swap(
                 from_token=self.borrow_token,
                 to_token=self.collateral_token,
@@ -636,6 +664,35 @@ class TALendingSwapWETHStrategy(IntentStrategy):
             )
 
         return Intent.hold(reason="Emergency mode with no repay inventory")
+
+    def _reconcile_pending_sell_state(self, data: dict[str, Decimal | datetime]) -> None:
+        if self.pending_action != "sell":
+            return
+
+        current_weth = Decimal(str(data["weth_balance"]))
+        current_usdc = Decimal(str(data["usdc_balance"]))
+        weth_spent = self.pending_sell_weth_balance - current_weth
+        usdc_gained = current_usdc - self.pending_sell_usdc_balance
+
+        if weth_spent <= 0 or usdc_gained <= 0:
+            return
+
+        if self.cycle.sold_weth <= 0:
+            self.cycle.sold_weth = weth_spent
+        else:
+            self.cycle.sold_weth = min(self.cycle.sold_weth, weth_spent)
+        self.cycle.usdc_proceeds = usdc_gained
+        self.base_inventory_weth = self.cycle.sold_weth
+        self.trade_state = TradeState.SOLD_FOR_USDC
+        self.pending_action = ""
+        self.pending_sell_weth_balance = Decimal("0")
+        self.pending_sell_usdc_balance = Decimal("0")
+
+        logger.info(
+            "Confirmed sell settlement from balance deltas: sold_weth=%s usdc_proceeds=%s",
+            self.cycle.sold_weth,
+            self.cycle.usdc_proceeds,
+        )
 
     def _estimate_buyback_weth(self, usdc_amount: Decimal, weth_price: Decimal, market: MarketSnapshot) -> Decimal:
         if usdc_amount <= 0:

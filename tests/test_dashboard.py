@@ -17,11 +17,13 @@ def _mock_columns(count: int):
 @patch("dashboard.ui.st.error")
 @patch("dashboard.ui.st.metric")
 @patch("dashboard.ui.st.columns", side_effect=_mock_columns)
+@patch("dashboard.ui.st.caption")
 @patch("dashboard.ui.st.subheader")
 @patch("dashboard.ui.st.title")
 def test_render_custom_dashboard_uses_template_and_renders_cycle_metrics(
     mock_title: MagicMock,
     _mock_subheader: MagicMock,
+    _mock_caption: MagicMock,
     _mock_columns_fn: MagicMock,
     mock_metric: MagicMock,
     _mock_error: MagicMock,
@@ -44,6 +46,7 @@ def test_render_custom_dashboard_uses_template_and_renders_cycle_metrics(
     session_state = {
         "health_factor": "1.45",
         "trade_state": "sold_for_usdc",
+        "pending_action": "buyback",
         "prev_zone": "high",
         "last_processed_candle_key": "2026-05-27T12:35:00+00:00",
         "base_inventory_weth": "0.3",
@@ -75,12 +78,12 @@ def test_render_custom_dashboard_uses_template_and_renders_cycle_metrics(
 
     metric_labels = [args[0] for args, _kwargs in mock_metric.call_args_list]
     assert "Health Factor" in metric_labels
-    assert "Cycle State" in metric_labels
-    assert "RSI Bucket" in metric_labels
-    assert "Excess WETH Bucket" in metric_labels
+    assert "Trade State" in metric_labels
+    assert "Pending Action" in metric_labels
+    assert "Excess Bucket (WETH)" in metric_labels
 
 
-def test_render_cycle_metrics_shows_emergency_status() -> None:
+def test_render_header_metrics_shows_emergency_status() -> None:
     strategy_config = {
         "target_health_factor": "1.5",
         "sell_hf_floor": "1.3",
@@ -102,14 +105,13 @@ def test_render_cycle_metrics_shows_emergency_status() -> None:
     }
 
     with (
-        patch("dashboard.ui.st.subheader"),
         patch("dashboard.ui.st.columns", side_effect=_mock_columns),
         patch("dashboard.ui.st.metric"),
         patch("dashboard.ui.st.warning") as mock_warning,
         patch("dashboard.ui.st.success") as mock_success,
         patch("dashboard.ui.st.error") as mock_error,
     ):
-        ui._render_cycle_metrics(session_state, strategy_config)
+        ui._render_header_metrics(session_state, strategy_config)
 
     mock_error.assert_called_once()
     mock_warning.assert_not_called()
