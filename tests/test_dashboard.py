@@ -107,3 +107,40 @@ def test_render_execution_overview_flags_emergency_threshold() -> None:
 
     mock_error.assert_called_once()
     mock_success.assert_not_called()
+
+
+@patch("dashboard.ui.render_lending_dashboard")
+@patch("dashboard.ui.get_aave_v3_config")
+@patch("dashboard.ui.st.columns", side_effect=_mock_columns)
+@patch("dashboard.ui.st.metric")
+@patch("dashboard.ui.st.caption")
+@patch("dashboard.ui.st.subheader")
+@patch("dashboard.ui.st.success")
+@patch("dashboard.ui.st.error")
+@patch("dashboard.ui.st.title")
+def test_render_custom_dashboard_handles_missing_inputs(
+    _mock_title: MagicMock,
+    _mock_error: MagicMock,
+    _mock_success: MagicMock,
+    _mock_subheader: MagicMock,
+    _mock_caption: MagicMock,
+    _mock_metric: MagicMock,
+    _mock_columns_fn: MagicMock,
+    mock_get_aave_v3_config: MagicMock,
+    mock_render_lending_dashboard: MagicMock,
+) -> None:
+    mock_get_aave_v3_config.return_value = {"preset": "aave"}
+
+    ui.render_custom_dashboard(
+        deployment_id="dep-1",
+        strategy_config=None,
+        api_client=None,
+        session_state=None,
+    )
+
+    mock_render_lending_dashboard.assert_called_once_with(
+        "dep-1",
+        {},
+        {},
+        {"preset": "aave"},
+    )

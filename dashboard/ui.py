@@ -48,6 +48,10 @@ def _to_decimal(value: Any, default: str = "0") -> Decimal:
         return Decimal(default)
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _state_value(session_state: dict[str, Any], key: str, default: Any) -> Any:
     if key in session_state:
         return session_state.get(key, default)
@@ -135,6 +139,9 @@ def render_custom_dashboard(
     api_client: Any,
     session_state: dict[str, Any],
 ) -> None:
+    strategy_config = _as_dict(strategy_config)
+    session_state = _as_dict(session_state)
+
     st.title(STRATEGY_TITLE)
 
     _render_execution_overview(session_state, strategy_config)
