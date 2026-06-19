@@ -408,26 +408,36 @@ class TALendingSwapWETHStrategy(IntentStrategy):
     def get_open_positions(self) -> TeardownPositionSummary:
         positions: list[PositionInfo] = []
 
-        if self.has_borrow_position:
+        try:
+            market = self.create_market_snapshot()
+            health = market.position_health(protocol="aave_v3", market_id="")
+            collateral_value_usd = Decimal(str(getattr(health, "collateral_value_usd", "0")))
+            debt_value_usd = Decimal(str(getattr(health, "debt_value_usd", "0")))
+        except (HealthUnavailableError, DataUnavailableError, ValueError) as exc:
+            logger.warning("Failed to read live positions for teardown summary: %s", exc)
+            collateral_value_usd = Decimal("0")
+            debt_value_usd = Decimal("0")
+
+        if debt_value_usd > 0:
             positions.append(
                 PositionInfo(
                     position_type=PositionType.BORROW,
                     position_id=f"aave-borrow-{self.borrow_token.lower()}",
                     chain=self.chain,
                     protocol="aave_v3",
-                    value_usd=Decimal("1"),
+                    value_usd=debt_value_usd,
                     details={"token": self.borrow_token},
                 )
             )
 
-        if self.has_collateral_position:
+        if collateral_value_usd > 0:
             positions.append(
                 PositionInfo(
                     position_type=PositionType.SUPPLY,
                     position_id=f"aave-supply-{self.collateral_token.lower()}",
                     chain=self.chain,
                     protocol="aave_v3",
-                    value_usd=Decimal("1"),
+                    value_usd=collateral_value_usd,
                     details={"token": self.collateral_token},
                 )
             )

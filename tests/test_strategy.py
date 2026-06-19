@@ -24,13 +24,13 @@ def _config() -> dict:
         "target_health_factor": "1.5",
         "sell_hf_floor": "1.3",
         "emergency_hf": "1.2",
-        "repay_bucket_min_usd": "0.06",
+        "repay_bucket_min_usd": "0.50",
         "min_supply_usdc": "1",
         "min_trade_weth": "0.00001",
         "min_borrow_weth": "0.00001",
         "initial_ltv_fallback": "0.6",
         "max_slippage": "0.003",
-        "max_price_impact": "0.10",
+        "max_price_impact": "0.05",
         "swap_fee_tier_bps": 500,
         "swap_pool_selection_mode": "fixed",
         "force_action": "",
@@ -395,7 +395,7 @@ def test_buyback_clamps_to_live_usdc_balance() -> None:
 
 def test_repay_from_excess_bucket_threshold() -> None:
     strategy = _strategy()
-    strategy.excess_weth_bucket = Decimal("0.00003")
+    strategy.excess_weth_bucket = Decimal("0.0003")
     market = _market(
         timestamp=datetime(2026, 1, 1, 12, 25, tzinfo=UTC),
         usdc=Decimal("0"),

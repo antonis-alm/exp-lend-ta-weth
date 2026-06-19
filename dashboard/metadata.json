@@ -1,5 +1,5 @@
 {
   "display_name": "TA Lending Swap WETH",
-  "description": "Fresh dashboard for the Base Aave+Uniswap RSI lending cycle with health-factor guardrails, pending-action visibility, and cycle telemetry.",
+  "description": "Rebuilt SDK v2.19 dashboard for the Base Aave+Uniswap RSI lending cycle with execution overview, cycle state, and guardrails.",
   "icon": "📈"
 }
